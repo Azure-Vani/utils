@@ -24,6 +24,32 @@ TO_EMAIL = "" # the email ADDRESS receiving the notification, such as user0@gmai
 DEAN_USERNAME = "" # the username for dean.pku.edu.cn
 DEAN_PASSWORD = "" # the password for dean.pku.edu.cn
 
+from functools import wraps
+import errno
+import os
+import signal
+
+class TimeoutError(Exception):
+    pass
+
+def timeout(seconds=10, error_message=os.strerror(errno.ETIME)):
+    def decorator(func):
+        def _handle_timeout(signum, frame):
+            raise TimeoutError(error_message)
+
+        def wrapper(*args, **kwargs):
+            signal.signal(signal.SIGALRM, _handle_timeout)
+            signal.alarm(seconds)
+            try:
+                result = func(*args, **kwargs)
+            finally:
+                signal.alarm(0)
+            return result
+
+        return wraps(func)(wrapper)
+
+    return decorator
+
 class Email:
     def __init__(self):
         self.mail_host = FROM_EMAIL_HOST
@@ -31,6 +57,7 @@ class Email:
         self.mail_pass = EMAIL_PASSWD
         self.mail_postfix = FROM_EMAIL_HOST
 
+    @timeout(100, "timeout while sending email")
     def send(self, content, To="", Me="Requiem", Subject=""):
         Me = Me + "<" + self.mail_user + "@" + self.mail_postfix + ">"
         To = TO_EMAIL if To == "" else To
@@ -66,7 +93,9 @@ class Job:
         for i in items:
             self.init_list[self.get_class_index(i)] = i
 
+    @timeout(100, "timeout while fetching grades")
     def fetch_grades(self):
+        print "Begin fetching..."
         conn = httplib.HTTPSConnection('iaaa.pku.edu.cn')
         conn.request('POST', '/iaaa/oauth.jsp', urllib.urlencode({'appID': 'dean', 'appName': '北京大学教务部网上学生服务中心', 'redirectUrl': 'http://dean.pku.edu.cn/student/center2.php'}), {'Content-Type': 'application/x-www-form-urlencoded'})
         res = conn.getresponse()
@@ -98,6 +127,7 @@ class Job:
         conn.request('GET', '/student/exit.php?PHPSESSID=%s' % phpsessid, headers = {'Cookie': 'PHPSESSID=%s' % phpsessid })
         conn.getresponse().read()
         conn.close()
+        print "End fetching..."
         return response
 
     def parse_item(self, regex_obj):
@@ -136,7 +166,7 @@ class Job:
     def run(self):
         count = 0
         while True:
-            if count % 30 == 0:
+            if count % 60 == 0:
                 m = Email()
                 tmp = m.send("Count: %d"%(count), Subject = "Heartbeat!")
 
